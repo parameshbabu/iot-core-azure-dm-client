@@ -12,6 +12,7 @@ IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMA
 WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH 
 THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
+
 #include "stdafx.h"
 #include <vector>
 #include <map>
@@ -21,11 +22,21 @@ THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "..\SharedUtilities\JsonHelpers.h"
 #include "..\SharedUtilities\Logger.h"
 #include "..\SharedUtilities\DMException.h"
+#include "..\SharedUtilities\PolicyHelper.h"
 #include "CSPs\MdmProvision.h"
+#include "ServiceManager.h"
+#include "..\DMShared\ErrorCodes.h"
 
 #include "Models\TimeInfo.h"
 
 #define NtpServerPropertyName "NtpServer"
+#define TimeServiceName L"w32time"
+#define JsonNo L"no"
+#define JsonYes L"yes"
+#define JsonNA L"n/a"
+#define JsonAuto L"auto"
+#define JsonManual L"manual"
+#define JsonUnexpected L"unexpected"
 
 using namespace Windows::System;
 using namespace Platform;
@@ -94,43 +105,67 @@ void TimeCfg::Set(SetTimeInfoRequest^ setTimeInfoRequest)
 {
     TRACE(__FUNCTION__);
 
-    SetNtpServer(setTimeInfoRequest->ntpServer->Data());
+    SetTimeInfoRequestData^ data = setTimeInfoRequest->data;
+
+    SetNtpServer(data->ntpServer->Data());
 
     TIME_ZONE_INFORMATION tzi = { 0 };
 
     // Bias...
-    tzi.Bias = setTimeInfoRequest->timeZoneBias;
+    tzi.Bias = data->timeZoneBias;
 
-    TRACEP("Bias: ", to_string(setTimeInfoRequest->timeZoneBias).c_str());
+    TRACEP("Bias: ", to_string(data->timeZoneBias).c_str());
 
-    TRACEP("Standard Bias: ", to_string(setTimeInfoRequest->timeZoneStandardBias).c_str());
-    TRACEP(L"Standard Name: ", setTimeInfoRequest->timeZoneStandardName->Data());
-    TRACEP(L"Standard Date: ", setTimeInfoRequest->timeZoneStandardDate->Data());
+    TRACEP("Standard Bias: ", to_string(data->timeZoneStandardBias).c_str());
+    TRACEP(L"Standard Name: ", data->timeZoneStandardName->Data());
+    TRACEP(L"Standard Date: ", data->timeZoneStandardDate->Data());
+    TRACEP(L"Standard Day of Week: ", to_string(data->timeZoneStandardDayOfWeek).c_str());
 
-    TRACEP("Daytime Bias: ", to_string(setTimeInfoRequest->timeZoneDaylightBias).c_str());
-    TRACEP(L"Daytime Name: ", setTimeInfoRequest->timeZoneDaylightName->Data());
-    TRACEP(L"Daytime Date: ", setTimeInfoRequest->timeZoneDaylightDate->Data());
+    TRACEP("Daytime Bias: ", to_string(data->timeZoneDaylightBias).c_str());
+    TRACEP(L"Daytime Name: ", data->timeZoneDaylightName->Data());
+    TRACEP(L"Daytime Date: ", data->timeZoneDaylightDate->Data());
+    TRACEP(L"Daytime Day of Week: ", to_string(data->timeZoneDaylightDayOfWeek).c_str());
 
     // Standard...
-    wcsncpy_s(tzi.StandardName, setTimeInfoRequest->timeZoneStandardName->Data(), _TRUNCATE);
-    if (!SystemTimeFromISO8601(setTimeInfoRequest->timeZoneStandardDate->Data(), tzi.StandardDate))
+    wcsncpy_s(tzi.StandardName, data->timeZoneStandardName->Data(), _TRUNCATE);
+    if (data->timeZoneStandardDate->Length() == 0)
     {
-        throw DMExceptionWithErrorCode("Error: invalid date/time format. Error Code = ", GetLastError());
+        // No support for daylight saving time.
+        tzi.StandardDate.wMonth = 0;
     }
-    tzi.StandardBias = setTimeInfoRequest->timeZoneStandardBias;
+    else
+    {
+        if (!SystemTimeFromISO8601(data->timeZoneStandardDate->Data(), tzi.StandardDate))
+        {
+            throw DMExceptionWithErrorCode("Error: invalid date/time format.", GetLastError());
+        }
+    }
+    tzi.StandardDate.wYear = 0;
+    tzi.StandardDate.wDayOfWeek = static_cast<WORD>(data->timeZoneStandardDayOfWeek);
+    tzi.StandardBias = data->timeZoneStandardBias;
 
     // Daytime...
-    wcsncpy_s(tzi.DaylightName, setTimeInfoRequest->timeZoneDaylightName->Data(), _TRUNCATE);
-    if (!SystemTimeFromISO8601(setTimeInfoRequest->timeZoneDaylightDate->Data(), tzi.DaylightDate))
+    wcsncpy_s(tzi.DaylightName, data->timeZoneDaylightName->Data(), _TRUNCATE);
+    if (data->timeZoneDaylightDate->Length() == 0)
     {
-        throw DMExceptionWithErrorCode("Error: invalid date/time format. Error Code = ", GetLastError());
+        // No support for daylight saving time.
+        tzi.DaylightDate.wMonth = 0;
     }
-    tzi.DaylightBias = setTimeInfoRequest->timeZoneDaylightBias;
+    else
+    {
+        if (!SystemTimeFromISO8601(data->timeZoneDaylightDate->Data(), tzi.DaylightDate))
+        {
+            throw DMExceptionWithErrorCode("Error: invalid date/time format.", GetLastError());
+        }
+    }
+    tzi.DaylightDate.wYear = 0;
+    tzi.DaylightDate.wDayOfWeek = static_cast<WORD>(data->timeZoneDaylightDayOfWeek);
+    tzi.DaylightBias = data->timeZoneDaylightBias;
 
     // Set it...
     if (!SetTimeZoneInformation(&tzi))
     {
-        throw DMExceptionWithErrorCode("Error: failed to set time zone information. Error Code = ", GetLastError());
+        throw DMExceptionWithErrorCode("Error: failed to set time zone information.", GetLastError());
     }
 
     TRACE(L"Time settings have been applied successfully.");
@@ -158,25 +193,184 @@ void TimeCfg::SetNtpServer(const std::wstring& ntpServer)
 GetTimeInfoResponse^ TimeCfg::Get()
 {
     TRACE(__FUNCTION__);
-    GetTimeInfoResponse ^response;
-    try
+
+    TimeInfo info;
+    Get(info);
+
+    GetTimeInfoResponseData^ data = ref new GetTimeInfoResponseData();
+    data->localTime = ref new String(info.localTime.c_str());
+    data->ntpServer = ref new String(info.ntpServer.c_str());
+    data->timeZoneBias = info.timeZoneInformation.Bias;
+
+    data->timeZoneStandardName = ref new String(info.timeZoneInformation.StandardName);
+    data->timeZoneStandardDate = ref new String(Utils::ISO8601FromSystemTime(info.timeZoneInformation.StandardDate).c_str());
+    data->timeZoneStandardBias = info.timeZoneInformation.StandardBias;
+    data->timeZoneStandardDayOfWeek = info.timeZoneInformation.StandardDate.wDayOfWeek;
+
+    data->timeZoneDaylightName = ref new String(info.timeZoneInformation.DaylightName);
+    data->timeZoneDaylightDate = ref new String(Utils::ISO8601FromSystemTime(info.timeZoneInformation.DaylightDate).c_str());
+    data->timeZoneDaylightBias = info.timeZoneInformation.DaylightBias;
+    data->timeZoneDaylightDayOfWeek = info.timeZoneInformation.DaylightDate.wDayOfWeek;
+
+    return ref new GetTimeInfoResponse(ResponseStatus::Success, data);
+}
+
+TimeServiceData^ TimeService::GetState()
+{
+    TRACE(__FUNCTION__);
+
+    TimeServiceData^ data = ref new TimeServiceData();
+
+    if (ServiceManager::GetStartType(TimeServiceName) == SERVICE_DISABLED)
     {
-        TimeInfo info;
-        Get(info);
-        response = ref new GetTimeInfoResponse(ResponseStatus::Success);
-        response->localTime = ref new String(info.localTime.c_str());
-        response->ntpServer = ref new String(info.ntpServer.c_str());
-        response->timeZoneBias = info.timeZoneInformation.Bias;
-        response->timeZoneStandardName = ref new String(info.timeZoneInformation.StandardName);
-        response->timeZoneStandardDate = ref new String(Utils::ISO8601FromSystemTime(info.timeZoneInformation.StandardDate).c_str());
-        response->timeZoneStandardBias = info.timeZoneInformation.StandardBias;
-        response->timeZoneDaylightName = ref new String(info.timeZoneInformation.DaylightName);
-        response->timeZoneDaylightDate = ref new String(Utils::ISO8601FromSystemTime(info.timeZoneInformation.DaylightDate).c_str());
-        response->timeZoneDaylightBias = info.timeZoneInformation.DaylightBias;
+        data->enabled = ref new String(JsonNo);
+        data->startup = ref new String(JsonNA);
+        data->started = ref new String(JsonNA);
     }
-    catch (...)
+    else
     {
-        response = ref new GetTimeInfoResponse(ResponseStatus::Failure);
+        data->enabled = ref new String(JsonYes);
+        if (ServiceManager::GetStartType(TimeServiceName) == SERVICE_AUTO_START)
+        {
+            data->startup = ref new String(JsonAuto);
+        }
+        else if (ServiceManager::GetStartType(TimeServiceName) == SERVICE_DEMAND_START)
+        {
+            data->startup = ref new String(JsonManual);
+        }
+        else
+        {
+            data->startup = ref new String(JsonUnexpected);
+        }
+
+        DWORD status = ServiceManager::GetStatus(TimeServiceName);
+
+        data->started = ref new String((status == SERVICE_RUNNING) ? JsonYes : JsonNo);
     }
-    return response;
+    data->policy = PolicyHelper::LoadFromRegistry(RegTimeService);
+
+    return data;
+}
+
+void TimeService::SaveState(TimeServiceData^ data)
+{
+    TRACE(__FUNCTION__);
+
+    if (!data->policy)
+    {
+        throw DMExceptionWithErrorCode("Policy unspecified while storing Time Service settings", ERROR_DM_TIME_SERVICE_MISSING_POLICY);
+    }
+
+    // Save source priorities...
+    PolicyHelper::SaveToRegistry(data->policy, RegTimeService);
+
+    // Save remote/local properties...
+    if (data->policy->source == PolicySource::Remote)
+    {
+        TRACE("Writing remote policy...");
+        Utils::WriteRegistryValue(RegRemoteTimeService, RegTimeServiceEnabled, data->enabled->Data());
+        Utils::WriteRegistryValue(RegRemoteTimeService, RegTimeServiceStartup, data->startup->Data());
+        Utils::WriteRegistryValue(RegRemoteTimeService, RegTimeServiceStarted, data->started->Data());
+    }
+    else
+    {
+        TRACE("Writing local policy...");
+        Utils::WriteRegistryValue(RegLocalTimeService, RegTimeServiceEnabled, data->enabled->Data());
+        Utils::WriteRegistryValue(RegLocalTimeService, RegTimeServiceStartup, data->startup->Data());
+        Utils::WriteRegistryValue(RegLocalTimeService, RegTimeServiceStarted, data->started->Data());
+    }
+}
+
+TimeServiceData^ TimeService::GetActiveDesiredState()
+{
+    TRACE(__FUNCTION__);
+
+    Policy^ policy = PolicyHelper::LoadFromRegistry(RegTimeService);
+    if (!policy)
+    {
+        TRACE("Active desired state for Time Service is not set.");
+        return nullptr;
+    }
+
+    for each(PolicySource p in policy->sourcePriorities)
+    {
+        wstring regSectionRoot = L"";
+        switch (p)
+        {
+            case PolicySource::Local:
+                TRACE("Reading local policy for Time Service.");
+                regSectionRoot = RegLocalTimeService;
+                break;
+            case PolicySource::Remote:
+                TRACE("Reading remote policy for Time Service.");
+                regSectionRoot = RegRemoteTimeService;
+                break;
+        }
+
+        bool success = true;
+
+        wstring enabled;
+        success &= ERROR_SUCCESS == Utils::TryReadRegistryValue(regSectionRoot.c_str(), RegTimeServiceEnabled, enabled);
+
+        wstring startup;
+        success &= ERROR_SUCCESS == Utils::TryReadRegistryValue(regSectionRoot.c_str(), RegTimeServiceStartup, startup);
+
+        wstring started;
+        success &= ERROR_SUCCESS == Utils::TryReadRegistryValue(regSectionRoot.c_str(), RegTimeServiceStarted, started);
+
+        if (!success)
+        {
+            TRACE("Did not find one or more attributes in the registry.");
+
+            // Try reading the next policy...
+            continue;
+        }
+
+        TRACE("Found all Time Service attributes in the registry.");
+
+        TimeServiceData^ data = ref new TimeServiceData();
+        data->enabled = ref new String(enabled.c_str());
+        data->startup = ref new String(startup.c_str());
+        data->started = ref new String(started.c_str());
+        data->policy = policy;
+        return data;
+    }
+
+    TRACE("Could not find active desired state for Time Service.");
+    return nullptr;
+}
+
+void TimeService::SetState(TimeServiceData^ data)
+{
+    TRACE(__FUNCTION__);
+
+    SaveState(data);
+    TimeServiceData^ activeDesiredState = GetActiveDesiredState();
+
+    TRACE("Applying active desired state");
+    if (activeDesiredState->enabled == JsonNo)
+    {
+        ServiceManager::Stop(TimeServiceName);
+        ServiceManager::SetStartType(TimeServiceName, SERVICE_DISABLED);
+    }
+    else
+    {
+        if (activeDesiredState->startup == JsonAuto)
+        {
+            ServiceManager::SetStartType(TimeServiceName, SERVICE_AUTO_START);
+        }
+        else if (activeDesiredState->startup == JsonManual)
+        {
+            ServiceManager::SetStartType(TimeServiceName, SERVICE_DEMAND_START);
+        }
+
+        if (activeDesiredState->started == JsonYes)
+        {
+            ServiceManager::Start(TimeServiceName);
+        }
+        else
+        {
+            ServiceManager::Stop(TimeServiceName);
+        }
+    }
 }

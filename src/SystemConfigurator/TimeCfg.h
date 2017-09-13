@@ -17,8 +17,7 @@ THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <string>
 #include <windows.h>
 #include "Models\TimeInfo.h"
-
-using namespace Microsoft::Devices::Management::Message;
+#include "Models\TimeService.h"
 
 class TimeCfg
 {
@@ -30,10 +29,21 @@ class TimeCfg
     };
 
 public:
-    static GetTimeInfoResponse^ Get();
-    static void Set(SetTimeInfoRequest^ request);
+    static Microsoft::Devices::Management::Message::GetTimeInfoResponse^ Get();
+    static void Set(Microsoft::Devices::Management::Message::SetTimeInfoRequest^ request);
 
 private:
     static void Get(TimeInfo& info);
     static void SetNtpServer(const std::wstring& ntpServer);
+};
+
+class TimeService
+{
+public:
+    static Microsoft::Devices::Management::Message::TimeServiceData^ GetState();
+    static void SetState(Microsoft::Devices::Management::Message::TimeServiceData^ request);
+
+private:
+    static void SaveState(Microsoft::Devices::Management::Message::TimeServiceData^ data);
+    static Microsoft::Devices::Management::Message::TimeServiceData^ GetActiveDesiredState();
 };

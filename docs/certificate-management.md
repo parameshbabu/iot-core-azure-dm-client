@@ -6,6 +6,9 @@ The **Certificate Management** functionality allows the operator to perform the 
 - List installed certificates.
 - Get detailed information about an installed certificate.
 
+To install new certificates, the operator will have to upload the certificate files to an Azure Storage account and save them in a container named ```certificates```.
+The external Azure is specified by the node [externalStorage](external-storage.md) in the desired properties. If this node is not set or not present, the certificate installation will fail.
+
 Those tasks can be performed on a pre-defined set of CSP paths. Below is a list of those CSPs path along with the corresponding json property name for each.
 
 - ./Device/Vendor/MSFT/RootCATrustedCertificates/Root **<-->** rootCATrustedCertificates_Root
@@ -23,10 +26,9 @@ The operator can specify the list of desired certificates to be installed under 
 - If a certificate is installed on the device, but is not present in the desired list, it is uninstalled.
 
 <pre>
-    "desired": {
-      "microsoft": {
-        "management": {
-          "certificates": {
+"desired": {
+    "windows": {
+        "certificates": {
             "rootCATrustedCertificates_Root": "fileName01.cer/fileName02.cer",
             "rootCATrustedCertificates_CA": "fileName01.cer/fileName02.cer",
             "rootCATrustedCertificates_TrustedPublisher": "fileName01.cer/fileName02.cer",
@@ -35,23 +37,18 @@ The operator can specify the list of desired certificates to be installed under 
             "certificateStore_Root_System": "fileName01.cer/fileName02.cer",
             "certificateStore_My_User": "fileName01.cer/fileName02.cer",
             "certificateStore_My_System": "fileName01.cer/fileName02.cer"
-          },
         }
-      }
     }
+}
 </pre>
 
 ## List Installed Certificates
 The DM client reports the hashes of installed certificates under the pre-defined set of CSP paths. Each set of hashes will appear under the json property name corresponding to the CSPs path as described in the mapping above.
 
 <pre>
-    "reported": {
-      "microsoft": {
-        "management": {
-          "certificates": {
-            "Tag": 50,
-            "Status": 0,
-            "Configuration": {
+"reported": {
+    "windows": {
+        "certificates": {
             "rootCATrustedCertificates_Root": "hash00/hash01",
             "rootCATrustedCertificates_CA": "hash00/hash01",
             "rootCATrustedCertificates_TrustedPublisher": "hash00/hash01",
@@ -59,21 +56,20 @@ The DM client reports the hashes of installed certificates under the pre-defined
             "certificateStore_CA_System": "hash00/hash01",
             "certificateStore_Root_System": "hash00/hash01",
             "certificateStore_My_User": "hash00/hash01",
-            "certificateStore_My_System": "hash00/hash01",
-            }
-          }
+            "certificateStore_My_System": "hash00/hash01"
         }
-      }
     }
+}
 </pre>
 
 ## Retrieve Certificate Details
-To get more details about any of the installed certificates, the request can be initiated by calling the asynchronous `microsoft.management.getCertificateDetails` method.
+To get more details about any of the installed certificates, the request can be initiated by calling the asynchronous `microsoft.windows.getCertificateDetails` method.
 The method will schedule a job on the device to capture the certificate details in a json file and upload it to the specified blob in Azure Storage.
 The method returns immediately and indicates that it has accepted or rejected the job.
 
 ### Input Payload 
-```
+
+<pre>
 {
     "path" : "csp path",
     "hash" : "hashValue",
@@ -81,17 +77,17 @@ The method returns immediately and indicates that it has accepted or rejected th
     "containerName" : "containerName",
     "output" : "blobFileName"
 }
-````
+</pre>
 
 ## Output Payload
 The device responds immediately with the following JSON payload:
 
-```
+<pre>
 {
     "response" : value (See below)
     "reason" : value (See below)
 }
-```
+</pre>
 
 Possible `"response"` values are: 
 - `"accepted"` - The reboot request was accepted. The device will retrieve the certificate details and upload it to the Azure Storage specified in the input parameters.
@@ -121,10 +117,9 @@ If the operator wants to install a new certificate (MyCertificate.cer) to ./Devi
 - Upload the certificate file to the default Azure blob storage. Let's assume its hash is MyCertificateHash.
 - Set the desired properties to:
 <pre>
-    "desired": {
-      "microsoft": {
-        "management": {
-          "certificates": {
+"desired": {
+    "windows": {
+        "certificates": {
             "rootCATrustedCertificates_Root": "fileName01.cer/fileName02.cer/MyCertificate.cer",
             "rootCATrustedCertificates_CA": "fileName01.cer/fileName02.cer",
             "rootCATrustedCertificates_TrustedPublisher": "fileName01.cer/fileName02.cer",
@@ -133,8 +128,11 @@ If the operator wants to install a new certificate (MyCertificate.cer) to ./Devi
             "certificateStore_Root_System": "fileName01.cer/fileName02.cer",
             "certificateStore_My_User": "fileName01.cer/fileName02.cer",
             "certificateStore_My_System": "fileName01.cer/fileName02.cer"
-          },
         }
-      }
     }
+}
 </pre>
+
+----
+
+[Home Page](../README.md) | [Library Reference](library-reference.md)

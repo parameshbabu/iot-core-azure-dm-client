@@ -31,43 +31,31 @@ namespace Microsoft { namespace Devices { namespace Management { namespace Messa
 {
     public ref class TpmGetServiceUrlRequest sealed : public IRequest
     {
-        uint32_t logicalDeviceId;
     public:
-
-        TpmGetServiceUrlRequest(uint32_t logicalDeviceId) : logicalDeviceId(logicalDeviceId) {}
-
         virtual Blob^ Serialize() {
             JsonObject^ jsonObject = ref new JsonObject();
-            jsonObject->Insert("LogicalDeviceId", JsonValue::CreateNumberValue(logicalDeviceId));
             return SerializationHelper::CreateBlobFromJson((uint32_t)Tag, jsonObject);
         }
 
         static IDataPayload^ Deserialize(Blob^ blob) {
             String^ str = SerializationHelper::GetStringFromBlob(blob);
             JsonObject^ jsonObject = JsonObject::Parse(str);
-            uint32_t logicalDeviceId = (uint32_t)jsonObject->Lookup("LogicalDeviceId")->GetNumber();
-            return ref new TpmGetServiceUrlRequest(logicalDeviceId);
+            return ref new TpmGetServiceUrlRequest();
         }
 
         virtual property DMMessageKind Tag {
             DMMessageKind get();
         }
-
-        property int LogicalDeviceId {
-            int get() { return logicalDeviceId; }
-        }
     };
 
     public ref class TpmGetSASTokenRequest sealed : public IRequest
     {
-        uint32_t logicalDeviceId;
         uint32_t expiration;
     public:
-        TpmGetSASTokenRequest(uint32_t logicalDeviceId, uint32_t expiration) : logicalDeviceId(logicalDeviceId), expiration(expiration) {}
+        TpmGetSASTokenRequest(uint32_t expiration) : expiration(expiration) {}
 
         virtual Blob^ Serialize() {
             JsonObject^ jsonObject = ref new JsonObject();
-            jsonObject->Insert("LogicalDeviceId", JsonValue::CreateNumberValue(logicalDeviceId));
             jsonObject->Insert("Expiration", JsonValue::CreateNumberValue(expiration));
             return SerializationHelper::CreateBlobFromJson((uint32_t)Tag, jsonObject);
         }
@@ -75,17 +63,12 @@ namespace Microsoft { namespace Devices { namespace Management { namespace Messa
         static IDataPayload^ Deserialize(Blob^ blob) {
             String^ str = SerializationHelper::GetStringFromBlob(blob);
             JsonObject^ jsonObject = JsonObject::Parse(str);
-            uint32_t logicalDeviceId = (uint32_t)jsonObject->Lookup("LogicalDeviceId")->GetNumber();
             uint32_t expiration = (uint32_t)jsonObject->Lookup("Expiration")->GetNumber();
-            return ref new TpmGetSASTokenRequest(logicalDeviceId, expiration);
+            return ref new TpmGetSASTokenRequest(expiration);
         }
 
         virtual property DMMessageKind Tag {
             DMMessageKind get();
-        }
-
-        property int LogicalDeviceId {
-            int get() { return logicalDeviceId; }
         }
 
         property int Expiration {

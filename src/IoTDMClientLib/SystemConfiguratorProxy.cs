@@ -15,15 +15,14 @@ THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 // #define DEBUG_COMMPROXY_OUTPUT
 
 using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Runtime.InteropServices;
-using System.Runtime.InteropServices.WindowsRuntime;
-using System.Runtime.Serialization;
+using System.Diagnostics;
 using System.Threading.Tasks;
 using Microsoft.Devices.Management.Message;
+using Windows.Foundation;
+using Windows.Foundation.Diagnostics;
 using Windows.Storage.Streams;
 using Windows.System;
+using Windows.UI.Core;
 
 namespace Microsoft.Devices.Management
 {
@@ -31,6 +30,52 @@ namespace Microsoft.Devices.Management
     // This class send requests (DMrequest) to the System Configurator and receives the responses (DMesponse) from it
     class SystemConfiguratorProxy : ISystemConfiguratorProxy
     {
+        const string CommProxyExe = @"C:\Windows\System32\CommProxy.exe";
+        const string CommProxyArgs = "";
+
+        private void Wait(Func<bool> condition, string message)
+        {
+            while (condition())
+            {
+                Debug.WriteLine(message);
+                CoreWindow coreWindow = CoreWindow.GetForCurrentThread();
+                if (coreWindow != null)
+                {
+                    Debug.WriteLine("Processing events...");
+                    coreWindow.Dispatcher.ProcessEvents(CoreProcessEventsOption.ProcessAllIfPresent);
+                }
+                else
+                {
+                    Debug.WriteLine("Sleeping...");
+                    Task.Delay(200);
+                }
+            }
+        }
+
+        private void ThrowError(IResponse response)
+        {
+            if (response == null)
+            {
+                throw new Error(ErrorSubSystem.Unknown, -1, "SystemConfigurator returned a null response.");
+            }
+            else if (response is ErrorResponse)
+            {
+                var errorResponse = response as ErrorResponse;
+                string message = "Sub-system=" + errorResponse.SubSystem.ToString() + ", code=" + errorResponse.ErrorCode + ", messag=" + errorResponse.ErrorMessage;
+                Logger.Log(message, LoggingLevel.Error);
+                Debug.WriteLine(message);
+                throw new Error(errorResponse.SubSystem, errorResponse.ErrorCode, errorResponse.ErrorMessage);
+            }
+            else if (response is StringResponse)
+            {
+                var stringResponse = response as StringResponse;
+                string message = "Error Tag(" + stringResponse.Tag.ToString() + ") : " + stringResponse.Status.ToString() + " : " + stringResponse.Response;
+                Logger.Log(message, LoggingLevel.Error);
+                Debug.WriteLine(message);
+                throw new Error(ErrorSubSystem.Unknown, -1, message);
+            }
+        }
+
         public async Task<IResponse> SendCommandAsync(IRequest command)
         {
             var processLauncherOptions = new ProcessLauncherOptions();
@@ -45,7 +90,7 @@ namespace Microsoft.Devices.Management
 
             standardInput.Dispose();
 
-            var processLauncherResult = await ProcessLauncher.RunToCompletionAsync(@"C:\Windows\System32\CommProxy.exe", "", processLauncherOptions);
+            var processLauncherResult = await ProcessLauncher.RunToCompletionAsync(CommProxyExe, CommProxyArgs, processLauncherOptions);
             if (processLauncherResult.ExitCode == 0)
             {
                 using (var outStreamRedirect = standardOutput.GetInputStreamAt(0))
@@ -53,11 +98,48 @@ namespace Microsoft.Devices.Management
                     var response = (await Blob.ReadFromIInputStreamAsync(outStreamRedirect)).MakeIResponse();
                     if (response.Status != ResponseStatus.Success)
                     {
-                        var stringResponse = response as StringResponse;
-                        if (stringResponse != null) throw new Exception(stringResponse.Response);
-                        throw new Exception("Operation failed");
+                        ThrowError(response);
                     }
                     return response;
+                }
+            }
+            else
+            {
+                throw new Exception("CommProxy cannot read data from the input pipe");
+            }
+        }
+
+        public Task<IResponse> SendCommand(IRequest command)
+        {
+            var processLauncherOptions = new ProcessLauncherOptions();
+            var standardInput = new InMemoryRandomAccessStream();
+            var standardOutput = new InMemoryRandomAccessStream();
+
+            processLauncherOptions.StandardOutput = standardOutput;
+            processLauncherOptions.StandardError = null;
+            processLauncherOptions.StandardInput = standardInput.GetInputStreamAt(0);
+
+            var writeAsyncAction = command.Serialize().WriteToIOutputStreamAsync(standardInput);
+            Wait(() => writeAsyncAction.Status == AsyncStatus.Started, "Waiting to finish writing to output stream...");
+            standardInput.Dispose();
+
+            var runAsyncAction = ProcessLauncher.RunToCompletionAsync(CommProxyExe, CommProxyArgs, processLauncherOptions);
+            Wait(() => runAsyncAction.Status == AsyncStatus.Started, "Waiting for CommProxy.exe to finish...");
+
+            ProcessLauncherResult processLauncherResult = runAsyncAction.GetResults();
+            if (processLauncherResult.ExitCode == 0)
+            {
+                using (var outStreamRedirect = standardOutput.GetInputStreamAt(0))
+                {
+                    var readAsyncAction = Blob.ReadFromIInputStreamAsync(outStreamRedirect);
+                    Wait(() => readAsyncAction.Status == AsyncStatus.Started, "Waiting to finish reading from input stream...");
+
+                    var response = readAsyncAction.GetResults().MakeIResponse();
+                    if (response.Status != ResponseStatus.Success)
+                    {
+                        ThrowError(response);
+                    }
+                    return Task.FromResult<IResponse>(response);
                 }
             }
             else

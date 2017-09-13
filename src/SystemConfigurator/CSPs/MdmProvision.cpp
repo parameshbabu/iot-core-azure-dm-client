@@ -29,20 +29,6 @@ using namespace std;
 
 bool MdmProvision::s_errorVerbosity = false;
 
-wstring GetResourceString(int id)
-{
-    const int bufferSize = 1024;
-    wchar_t buffer[bufferSize];
-    if (!LoadString(GetModuleHandle(NULL), id, buffer, bufferSize))
-    {
-        if (!LoadString(GetModuleHandle(NULL), IDS_OMA_SYNCML_STATUS_UNKNOWN, buffer, bufferSize))
-        {
-            return wstring(L"Unknown OMA SyncML status code.");
-        }
-    }
-    return wstring(buffer);
-}
-
 void MdmProvision::SetErrorVerbosity(bool verbosity) noexcept
 {
     s_errorVerbosity = verbosity;
@@ -50,18 +36,19 @@ void MdmProvision::SetErrorVerbosity(bool verbosity) noexcept
 
 void MdmProvision::RunSyncML(const wstring&, const wstring& requestSyncML, wstring& outputSyncML)
 {
+    TRACEP(L"Request : ", requestSyncML.c_str());
+
     PWSTR output = nullptr;
     HRESULT hr = RegisterDeviceWithLocalManagement(NULL);
     if (FAILED(hr))
     {
-        throw DMException("RegisterDeviceWithLocalManagement", hr);
+        throw DMExceptionWithErrorCode("RegisterDeviceWithLocalManagement", hr);
     }
 
     hr = ApplyLocalManagementSyncML(requestSyncML.c_str(), &output);
     if (FAILED(hr))
     {
-        TRACEP(L"Error: MdmProvisionSyncBodyWithAttributes failed. Error code = ", hr);
-        throw DMException("MdmProvisionSyncBodyWithAttributes");
+        throw DMExceptionWithErrorCode("ApplyLocalManagementSyncML", hr);
     }
 
     if (output)
@@ -70,7 +57,6 @@ void MdmProvision::RunSyncML(const wstring&, const wstring& requestSyncML, wstri
     }
     LocalFree(output);
 
-    TRACEP(L"Request : ", requestSyncML.c_str());
     TRACEP(L"Response: ", outputSyncML.c_str());
 
     wstring returnCodeString;
@@ -127,6 +113,32 @@ void MdmProvision::RunAddData(const wstring& sid, const wstring& path, const wst
                     <Data>)";
     requestSyncML += value;
     requestSyncML += LR"(</Data>
+                </Item>
+            </Add>
+        </SyncBody>
+        )";
+
+    wstring resultSyncML;
+    RunSyncML(sid, requestSyncML, resultSyncML);
+}
+
+void MdmProvision::RunAddTyped(const wstring& sid, const wstring& path, const wstring& type)
+{
+    wstring requestSyncML = LR"(
+        <SyncBody>
+            <Add>
+                <CmdID>1</CmdID>
+                <Item>
+                    <Target>
+                        <LocURI>)";
+    requestSyncML += path;
+    requestSyncML += LR"(</LocURI>
+                    </Target>
+                    <Meta>
+                        <Format xmlns="syncml:metinf">)";
+    requestSyncML += type;
+    requestSyncML += LR"(</Format>
+                    </Meta>
                 </Item>
             </Add>
         </SyncBody>
@@ -430,6 +442,33 @@ void MdmProvision::RunExec(const wstring& sid, const wstring& path)
     RunSyncML(sid, requestSyncML, resultSyncML);
 }
 
+void MdmProvision::RunExecWithParameters(const wstring& sid, const wstring& path, const wstring& params)
+{
+    wstring requestSyncML = LR"(
+    <SyncBody>
+        <Exec>
+            <CmdID>1</CmdID>
+            <Item>
+                <Target>
+                    <LocURI>)";
+    requestSyncML += path;
+    requestSyncML += LR"(</LocURI>
+                </Target>
+                <Meta>
+                    <Format xmlns="syncml:metinf">chr</Format>
+                </Meta>
+                <Data>)";
+    requestSyncML += params;
+    requestSyncML += LR"(</Data>
+            </Item>
+        </Exec>
+    </SyncBody>
+        )";
+
+    wstring resultSyncML;
+    RunSyncML(sid, requestSyncML, resultSyncML);
+}
+
 void MdmProvision::RunAdd(const wstring& path, const wstring& value)
 {
     // empty sid is okay for device-wide CSPs.
@@ -440,6 +479,11 @@ void MdmProvision::RunAddData(const std::wstring& path, int value)
 {
     // empty sid is okay for device-wide CSPs.
     RunAddData(L"", path, Utils::MultibyteToWide(to_string(value).c_str()), L"int");
+}
+
+void MdmProvision::RunAddTyped(const wstring& path, const wstring& type)
+{
+    RunAddTyped(L"", path, type);
 }
 
 void MdmProvision::RunAddData(const std::wstring& path, bool value)
@@ -536,6 +580,11 @@ void MdmProvision::RunExec(const wstring& path)
     RunExec(L"", path);
 }
 
+void MdmProvision::RunExecWithParameters(const std::wstring& path, const std::wstring& params)
+{
+    RunExecWithParameters(L"", path, params);
+}
+
 void MdmProvision::ReportError(const wstring& syncMLRequest, const wstring& syncMLResponse, int errorCode)
 {
     if (s_errorVerbosity)
@@ -544,11 +593,10 @@ void MdmProvision::ReportError(const wstring& syncMLRequest, const wstring& sync
         TRACEP(L"Request:\n", syncMLRequest.c_str());
         TRACEP(L"Response:\n", syncMLResponse.c_str());
         TRACEP(L"Error:\n", errorCode);
-        TRACEP(L"Error Message:\n", GetResourceString(errorCode).c_str());
     }
     else
     {
-        TRACEP(L"Error:\n", GetResourceString(errorCode).c_str());
+        TRACEP(L"Error:\n", errorCode);
     }
 }
 
